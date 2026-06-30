@@ -1,0 +1,1017 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>3D Matrix Rain</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas {
+      display: block;
+      cursor: ns-resize;
+      touch-action: none;
+    }
+    #hud {
+      position: fixed;
+      top: 12px;
+      left: 14px;
+      z-index: 10;
+      font: 11px/1.55 "Menlo", "Consolas", ui-monospace, monospace;
+      color: rgba(0, 255, 65, 0.55);
+      letter-spacing: 0.06em;
+      text-shadow: 0 0 6px rgba(0, 255, 65, 0.35);
+      pointer-events: none;
+      user-select: none;
+      white-space: pre;
+    }
+    #hint {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      padding: 10px 24px 12px;
+      background: rgba(0, 0, 0, 0.72);
+      border: 1px solid rgba(0, 255, 65, 0.28);
+      border-radius: 6px;
+      font: 12px/1.7 "Menlo", "Consolas", ui-monospace, monospace;
+      color: rgba(0, 255, 65, 0.85);
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
+      text-align: center;
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+      animation: hintFadeIn 0.8s ease-out 0.5s both;
+    }
+    @keyframes hintFadeIn {
+      from { opacity: 0; transform: translate(-50%, 12px); }
+      to   { opacity: 1; transform: translate(-50%, 0); }
+    }
+    #hint .hint-title {
+      font-size: 9px;
+      letter-spacing: 0.28em;
+      opacity: 0.55;
+      margin-bottom: 8px;
+    }
+    #hint-close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 22px;
+      height: 22px;
+      border: 1px solid rgba(0, 255, 65, 0.35);
+      background: transparent;
+      color: rgba(0, 255, 65, 0.7);
+      font: bold 14px/1 "Menlo", "Consolas", ui-monospace, monospace;
+      border-radius: 3px;
+      cursor: pointer;
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+    }
+    #hint-close:hover, #hint-close:focus {
+      background: rgba(0, 255, 65, 0.15);
+      border-color: rgba(0, 255, 65, 0.7);
+      color: rgba(0, 255, 65, 1);
+      text-shadow: 0 0 8px rgba(0, 255, 65, 0.8);
+      outline: none;
+    }
+    #hint-close:active {
+      background: rgba(0, 255, 65, 0.28);
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="hud"></div>
+  <div id="hint">
+    <button id="hint-close" type="button" aria-label="Hide control guide" title="Hide">×</button>
+    <div class="hint-title">CONTROLS</div>
+    <div>SCROLL · dive through the rain</div>
+    <div>MOUSE · tilt the camera</div>
+    <div>SPACE · pause / resume</div>
+    <div>R · reset camera position</div>
+    <div>1 / 2 / 3 / 4 · green / amber / cyan / violet palette</div>
+    <div>H · show / hide this panel</div>
+    <div>&#x2191;&#x2191;&#x2193;&#x2193; &#x2190;&#x2192; &#x2190;&#x2192; B A · rainbow palette <span style="opacity:0.5">(Konami)</span></div>
+  </div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+    import { BokehPass }        from 'three/addons/postprocessing/BokehPass.js';
+    import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { ShaderPass }       from 'three/addons/postprocessing/ShaderPass.js';
+    import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+
+    // =========================================================================
+    // CHARSET — canonical Matrix mix: half-width katakana + alnum + symbols.
+    // Length is irrelevant to the layout; the atlas grid adapts to ceil(N/12).
+    // =========================================================================
+    const CHARSET =
+      'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ' +
+      '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
+      '!@#$%&*+-=/<>?;:()[]{}|';
+
+    // =========================================================================
+    // Palette table — 4 base palettes plus a 'rainbow' pseudo-palette driven by
+    // the Konami easter egg. head = bright saturated hue at the cell front;
+    // tail = dim hue at the trail's edge. Each row lerps from head to tail
+    // based on the row's age within the trail.
+    // =========================================================================
+    const PALETTES = {
+      green:  { head: [0.25, 1.00, 0.45], tail: [0.00, 0.30, 0.05] },
+      amber:  { head: [1.00, 0.75, 0.20], tail: [0.30, 0.10, 0.00] },
+      cyan:   { head: [0.20, 0.95, 1.00], tail: [0.00, 0.20, 0.30] },
+      violet: { head: [0.85, 0.30, 1.00], tail: [0.15, 0.00, 0.25] },
+      // Rainbow is not used for color math; tick() swaps activePalette per-frame
+      // when paletteName === 'rainbow'. Kept here so setPalette() recognises it.
+      rainbow: { head: [0, 0, 0], tail: [0, 0, 0] },
+    };
+    let paletteName = 'green';
+    let activePalette = PALETTES.green;
+    function setPalette(name) {
+      if (PALETTES[name]) { paletteName = name; activePalette = PALETTES[name]; return true; }
+      return false;
+    }
+
+    // =========================================================================
+    // Field geometry — 2400 glyph instances laid out as 40 cols x 60 rows.
+    // Each column lives at a unique (x, z) and a falling "head" drives the trail.
+    // =========================================================================
+    const N_COLS = 40;
+    const N_ROWS = 60;
+    const TOTAL  = N_COLS * N_ROWS;
+
+    const Z_NEAR = 5;
+    const Z_FAR  = -80;
+    const Y_TOP  = 25;
+    const Y_BOT  = -25;
+    const COL_X_SPAN = 50;
+    const COL_Z_SPAN = Z_NEAR - Z_FAR; // 85
+    const TRAIL_LEN  = 14;
+    const GLYPH_SCALE = 0.85;
+    const MUTATION_RATE = 0.08;
+
+    // =========================================================================
+    // Camera spring — wheel drives a target, a critically-damped spring follows.
+    // FOV breathes with velocity for a "speed" feel.
+    // =========================================================================
+    const Z_MIN     = Z_FAR + 5;   // -75, do not pass the back wall
+    const Z_MAX     = 15;          // do not get too close to the front wall
+    const WHEEL_K   = 0.012;
+    const K_SPRING  = 4.0;
+    const K_FRICTION = 2.5;
+    const FOV_BASE  = 75;
+    const FOV_RANGE = 3;
+
+    // =========================================================================
+    // Renderer / scene / camera — fixed initial state.
+    // =========================================================================
+    let w = window.innerWidth;
+    let h = window.innerHeight;
+    let dpr = Math.min(2, window.devicePixelRatio || 1);
+    let quality = 'high';
+
+    let cameraZ = 0;
+    let targetZ = 0;
+    let cameraZVel = 0;
+
+    // =========================================================================
+    // Konami easter-egg accumulator — keydown increments konamiStep; on a full
+    // match we flip into rainbow palette mode, which tick() cycles 500ms/color
+    // through green→amber→cyan→violet.
+    // =========================================================================
+    // konamiStep indexes into KONAMI; positions are compared by code, not by
+    // key identity, so the duplicated ArrowUp entries are handled correctly.
+    let konamiStep = 0;
+    let konamiActive = false;
+    const KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','KeyB','KeyA'];
+
+    // =========================================================================
+    // Lead-character spike buffer — ring of the last 64 brightness spikes
+    // applied to head cells; exposed via __debug for the verification hook.
+    // =========================================================================
+    const HEAD_SPIKE_BUFFER = new Float32Array(64);
+    let headSpikeIdx = 0;
+    let headSpikeCount = 0;
+
+    // =========================================================================
+    // Mouse parallax tilt — two independent critically-damped springs on the
+    // target tilt driven by normalised cursor coords. Range is small (±0.05
+    // rad) to keep the scene grounded.
+    // =========================================================================
+    let mouseTiltX = 0, mouseTiltY = 0;
+    let targetTiltX = 0, targetTiltY = 0;
+    let tiltVelX = 0, tiltVelY = 0;
+    const TILT_K_SPRING = 4.0;
+    const TILT_K_FRICTION = 2.5;
+    const TILT_RANGE = 0.05;
+
+    // =========================================================================
+    // Adaptive quality — when sustained FPS drops below ADAPTIVE_LOW_THRESHOLD
+    // we hide 30% of instances (mesh.count). When sustained FPS recovers above
+    // ADAPTIVE_HIGH_THRESHOLD for ADAPTIVE_HIGH_DURATION we restore them.
+    // visibleCount / TOTAL ratio is exposed via __debug.
+    // =========================================================================
+    let visibleCount = TOTAL;
+    let adaptiveReduced = false;
+    let lowFpsSince = 0;
+    let highFpsSince = 0;
+    const ADAPTIVE_LOW_THRESHOLD  = 47;
+    const ADAPTIVE_HIGH_THRESHOLD = 59;
+    const ADAPTIVE_LOW_DURATION   = 2000;
+    const ADAPTIVE_HIGH_DURATION  = 5000;
+    function setVisibleCount(n) {
+      visibleCount = Math.max(1, Math.min(TOTAL, n | 0));
+      mesh.count = visibleCount;
+    }
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(w, h, false);
+    renderer.setClearColor(0x000000, 1);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.LinearToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.autoClear = true;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.Fog(0x000000, 12, 60);
+
+    const camera = new THREE.PerspectiveCamera(FOV_BASE, w / h, 0.1, 300);
+    camera.position.set(0, 0, 0);
+    camera.lookAt(0, 0, -1);
+
+    // =========================================================================
+    // Glyph atlas — CanvasTexture, padded cells, linear sampling, no mipmaps.
+    // Each cell is 78% glyph / 22% transparent so glyphs never bleed into
+    // adjacent atlas cells.
+    // =========================================================================
+    function buildGlyphAtlas(charset, cellSize = 64) {
+      const cols = 12;
+      const rows = Math.ceil(charset.length / cols);
+      const canvas = document.createElement('canvas');
+      canvas.width = cols * cellSize;
+      canvas.height = rows * cellSize;
+      const ctx = canvas.getContext('2d', { alpha: true });
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.font = `bold ${Math.floor(cellSize * 0.78)}px "Share Tech Mono", "Hiragino Sans", "Noto Sans CJK JP", "Menlo", "Consolas", monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < charset.length; i++) {
+        const cx = i % cols;
+        const cy = Math.floor(i / cols);
+        ctx.fillText(charset[i], cx * cellSize + cellSize / 2, cy * cellSize + cellSize / 2);
+      }
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.premultiplyAlpha = true;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.needsUpdate = true;
+      return { texture: tex, cols, rows, cellSize, canvas };
+    }
+
+    const atlas = buildGlyphAtlas(CHARSET, 64);
+    const cellU = 1 / atlas.cols;
+    const cellV = 1 / atlas.rows;
+
+    // =========================================================================
+    // InstancedMesh — one plane geometry, N instances, per-instance attrs:
+    //   aGlyphIndex -> uv offset into atlas
+    //   aOpacity    -> per-cell transparency
+    //   instanceColor (built-in) -> per-cell green tint
+    // =========================================================================
+    function buildInstancedMesh(count, atlasRef) {
+      const geom = new THREE.PlaneGeometry(1, 1);
+      const mat = new THREE.MeshBasicMaterial({
+        map: atlasRef.texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.NormalBlending,
+        toneMapped: true,
+        side: THREE.DoubleSide,
+      });
+
+      const aGlyphIndex = new Float32Array(count);
+      const aOpacity    = new Float32Array(count);
+      for (let i = 0; i < count; i++) aOpacity[i] = 1.0;
+
+      const mesh = new THREE.InstancedMesh(geom, mat, count);
+      mesh.frustumCulled = false;
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+      mat.onBeforeCompile = (shader) => {
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            'void main()',
+            `
+            attribute float aGlyphIndex;
+            attribute float aOpacity;
+            varying vec2 vUvCell;
+            varying float vOpacity;
+            void main()`
+          )
+          .replace(
+            '#include <uv_vertex>',
+            `
+            #include <uv_vertex>
+            float gi = aGlyphIndex;
+            float gx = mod(gi, ${atlasRef.cols.toFixed(1)});
+            float gy = floor(gi / ${atlasRef.cols.toFixed(1)});
+            vUvCell = uv * vec2(${cellU.toFixed(8)}, ${cellV.toFixed(8)})
+                    + vec2(gx * ${cellU.toFixed(8)},
+                           (${atlasRef.rows.toFixed(1)} - 1.0 - gy) * ${cellV.toFixed(8)});
+            vOpacity = aOpacity;
+            #ifdef USE_MAP
+              vMapUv = vUvCell;
+            #endif
+            `
+          );
+
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            'void main()',
+            `varying vec2 vUvCell; varying float vOpacity; void main()`
+          )
+          .replace(
+            '#include <map_fragment>',
+            `
+            #include <map_fragment>
+            diffuseColor.a *= vOpacity;
+            `
+          );
+      };
+
+      const glyphAttr = new THREE.InstancedBufferAttribute(aGlyphIndex, 1);
+      glyphAttr.setUsage(THREE.DynamicDrawUsage);
+      mesh.geometry.setAttribute('aGlyphIndex', glyphAttr);
+
+      const opacityAttr = new THREE.InstancedBufferAttribute(aOpacity, 1);
+      opacityAttr.setUsage(THREE.DynamicDrawUsage);
+      mesh.geometry.setAttribute('aOpacity', opacityAttr);
+
+      return { mesh, aGlyphIndex, aOpacity };
+    }
+
+    const built = buildInstancedMesh(TOTAL, atlas);
+    const mesh  = built.mesh;
+    const aGlyphIndex = built.aGlyphIndex;
+    const aOpacity    = built.aOpacity;
+    scene.add(mesh);
+
+    // =========================================================================
+    // Column state — each column has a falling "head" and a per-row glyph
+    // choice. The renderable opacity/brightness of a row is a function of
+    // how recently the head passed it.
+    // =========================================================================
+    const columns = new Array(N_COLS);
+    for (let c = 0; c < N_COLS; c++) {
+      const col = {
+        x: (c / (N_COLS - 1) - 0.5) * COL_X_SPAN + (Math.random() - 0.5) * 2.0,
+        z: Z_FAR + Math.random() * COL_Z_SPAN,
+        speed: 8 + Math.random() * 14,
+        headY: Y_TOP - Math.random() * (Y_TOP - Y_BOT),
+        cellChars: new Float32Array(N_ROWS),
+        glitchUntil: 0,
+        glitchActive: false,
+      };
+      for (let r = 0; r < N_ROWS; r++) {
+        col.cellChars[r] = Math.floor(Math.random() * CHARSET.length);
+      }
+      columns[c] = col;
+    }
+
+    const dummy = new THREE.Object3D();
+    const colorArr = mesh.instanceColor.array;
+
+    // =========================================================================
+    // Mist particle system (V1) — soft additive sprites drifting downward.
+    // buildDotTexture() returns a radial alpha gradient on a 16×16 canvas;
+    // we instance a 1×1 plane and reuse `dummy` for matrix composition.
+    // =========================================================================
+    function buildDotTexture(size = 16) {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      const r = size / 2;
+      const g = ctx.createRadialGradient(r, r, 0, r, r, r);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, size, size);
+      const tex = new THREE.CanvasTexture(c);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.premultiplyAlpha = true;
+      return tex;
+    }
+    const dotTex = buildDotTexture(16);
+
+    const MIST_COUNT = 300;
+    const mist = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        map: dotTex, transparent: true, depthWrite: false,
+        blending: THREE.AdditiveBlending, opacity: 0.15, toneMapped: false,
+      }),
+      MIST_COUNT
+    );
+    mist.name = 'mist';
+    mist.frustumCulled = false;
+    mist.renderOrder = -1;
+    scene.add(mist);
+
+    // (x, y, z, speed) per mist particle. Initial distribution covers the same
+    // volume as the main glyph field plus some slack; speed varies 0.3–1.0 so
+    // the cloud has parallax depth.
+    const mistState = new Float32Array(MIST_COUNT * 4);
+    for (let i = 0; i < MIST_COUNT; i++) {
+      mistState[i*4+0] = (Math.random() - 0.5) * COL_X_SPAN * 1.4;
+      mistState[i*4+1] = Y_TOP + Math.random() * (Y_TOP - Y_BOT);
+      mistState[i*4+2] = Z_FAR + Math.random() * COL_Z_SPAN;
+      mistState[i*4+3] = 0.3 + Math.random() * 0.7;
+    }
+
+    // =========================================================================
+    // Composer chain — RenderPass -> BokehPass -> UnrealBloomPass -> OutputPass.
+    // OutputPass is required in r160 for the final tone map + colorspace step.
+    // =========================================================================
+    const composer = new EffectComposer(renderer);
+    composer.setPixelRatio(dpr);
+    composer.setSize(w, h);
+
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    const bokehPass = new BokehPass(scene, camera, {
+      focus: 0.95,
+      aperture: 0.025,
+      maxblur: 0.012,
+    });
+    composer.addPass(bokehPass);
+
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.45, 0.55);
+    composer.addPass(bloomPass);
+
+    // Chromatic aberration (V2): horizontal-only UV offset scaled by local
+    // luminance. Horizontal-only direction keeps the shift uniform across
+    // the frame so screen-edge glyphs do not sample background black for
+    // their R/B channels (which would otherwise leave only the G channel).
+    const chromaPass = new ShaderPass({
+      uniforms: {
+        tDiffuse:   { value: null },
+        uOffset:    { value: 0.0014 },
+        uIntensity: { value: 1.0 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float uOffset;
+        uniform float uIntensity;
+        varying vec2 vUv;
+        void main() {
+          float luma = dot(texture2D(tDiffuse, vUv).rgb, vec3(0.299, 0.587, 0.114));
+          float k = uOffset * luma * uIntensity;
+          vec3 col;
+          col.r = texture2D(tDiffuse, vUv + vec2(k, 0.0)).r;
+          col.g = texture2D(tDiffuse, vUv).g;
+          col.b = texture2D(tDiffuse, vUv - vec2(k, 0.0)).b;
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+    composer.addPass(chromaPass);
+
+    const outputPass = new OutputPass();
+    composer.addPass(outputPass);
+
+    // =========================================================================
+    // Per-frame column / instance update.
+    // For each column, advance the head, then walk all 60 rows and write:
+    //   - opacity (age-based power falloff)
+    //   - color  (head = bright near-white green, tail = dim green)
+    //   - glyph  (mutate ~8% of cells per frame)
+    //   - matrix (column x, row y, column z, slight uniform scale)
+    // =========================================================================
+    function tick(dt) {
+      // Rainbow easter egg: cycle activePalette through the 4 base palettes
+      // at 500ms per color so the entire field re-tints in lock-step.
+      if (paletteName === 'rainbow') {
+        const cycle = ['green','amber','cyan','violet'];
+        const idx = Math.floor(performance.now() / 500) % cycle.length;
+        activePalette = PALETTES[cycle[idx]];
+      }
+
+      for (let c = 0; c < N_COLS; c++) {
+        const col = columns[c];
+
+        // Column-glitch burst: a random ~0.5% per-tick chance of flipping
+        // the column into "hot" mode for 150ms, multiplying every glyph's
+        // RGB by 2.0 (clamped). Disarms automatically.
+        const _now = performance.now();
+        if (!col.glitchActive && Math.random() < 0.005) {
+          col.glitchActive = true;
+          col.glitchUntil = _now + 150;
+        } else if (col.glitchActive && _now >= col.glitchUntil) {
+          col.glitchActive = false;
+        }
+
+        col.headY -= col.speed * dt;
+        if (col.headY < Y_BOT - 5) {
+          col.headY = Y_TOP + Math.random() * 5;
+        }
+
+        for (let r = 0; r < N_ROWS; r++) {
+          const y = Y_TOP - (r / (N_ROWS - 1)) * (Y_TOP - Y_BOT);
+          const age = Math.max(0, Math.min(1, (col.headY - y) / TRAIL_LEN));
+          const bright = Math.pow(1 - age, 2.2);
+
+          // head = bright saturated palette hue; tail = dim hue.
+          const p = activePalette;
+          let r3 = (p.head[0] * (1 - age) + p.tail[0] * age) * bright;
+          let g3 = (p.head[1] * (1 - age) + p.tail[1] * age) * bright;
+          let b3 = (p.head[2] * (1 - age) + p.tail[2] * age) * bright;
+
+          // Lead-character flicker (v0.4a): the very front cell of each
+          // column spikes to 1.6–2.2× brightness ~8% of frames, then gets
+          // a small ±5% mod to make it breathe. Records the spike value.
+          if (age < 0.05) {
+            if (Math.random() < 0.08) {
+              const spike = 1.6 + Math.random() * 0.6;
+              r3 = Math.min(1.0, r3 * spike);
+              g3 = Math.min(1.0, g3 * spike);
+              b3 = Math.min(1.0, b3 * spike);
+              HEAD_SPIKE_BUFFER[headSpikeIdx] = spike;
+              headSpikeIdx = (headSpikeIdx + 1) % HEAD_SPIKE_BUFFER.length;
+              headSpikeCount = Math.min(headSpikeCount + 1, HEAD_SPIKE_BUFFER.length);
+            }
+            const mod = 0.95 + Math.random() * 0.10;
+            r3 *= mod; g3 *= mod; b3 *= mod;
+          }
+
+          // Column-glitch multiplier (v0.4b): while the column is in
+          // glitchActive state, push every cell toward white by 2×.
+          const glitchMul = col.glitchActive ? 2.0 : 1.0;
+          r3 = Math.min(1.0, r3 * glitchMul);
+          g3 = Math.min(1.0, g3 * glitchMul);
+          b3 = Math.min(1.0, b3 * glitchMul);
+
+          const idx = c * N_ROWS + r;
+          aOpacity[idx] = bright;
+
+          const off = idx * 3;
+          colorArr[off]     = r3;
+          colorArr[off + 1] = g3;
+          colorArr[off + 2] = b3;
+
+          if (Math.random() < MUTATION_RATE) {
+            col.cellChars[r] = Math.floor(Math.random() * CHARSET.length);
+          }
+          aGlyphIndex[idx] = col.cellChars[r];
+
+          dummy.position.set(col.x, y, col.z);
+          dummy.scale.set(GLYPH_SCALE, GLYPH_SCALE, GLYPH_SCALE);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(idx, dummy.matrix);
+        }
+      }
+
+      mesh.geometry.getAttribute('aGlyphIndex').needsUpdate = true;
+      mesh.geometry.getAttribute('aOpacity').needsUpdate    = true;
+      mesh.instanceMatrix.needsUpdate   = true;
+      mesh.instanceColor.needsUpdate    = true;
+
+      // Atmospheric mist (V1): 300 additive-blended billboard sprites falling
+      // slowly through the scene. Reuses `dummy` so we don't allocate per tick.
+      for (let i = 0; i < MIST_COUNT; i++) {
+        let my = mistState[i*4+1] - mistState[i*4+3] * dt;
+        if (my < Y_BOT - 5) my = Y_TOP + Math.random() * 5;
+        mistState[i*4+1] = my;
+        dummy.position.set(mistState[i*4+0], my, mistState[i*4+2]);
+        dummy.scale.set(0.25, 0.25, 0.25);
+        dummy.updateMatrix();
+        mist.setMatrixAt(i, dummy.matrix);
+      }
+      mist.instanceMatrix.needsUpdate = true;
+    }
+
+    // =========================================================================
+    // Camera update — critically-damped spring on targetZ, clamp, FOV breath,
+    // and a BokehPass focus that tracks a point FOCUS_DIST in front of camera.
+    // =========================================================================
+    const FOCUS_DIST = 10;
+    const focusProbe = new THREE.Vector3();
+
+    function updateCamera(dt) {
+      const accel = (targetZ - cameraZ) * K_SPRING - cameraZVel * K_FRICTION;
+      cameraZVel += accel * dt;
+      cameraZ    += cameraZVel * dt;
+
+      if (cameraZ < Z_MIN) { cameraZ = Z_MIN; if (cameraZVel < 0) cameraZVel = 0; }
+      if (cameraZ > Z_MAX) { cameraZ = Z_MAX; if (cameraZVel > 0) cameraZVel = 0; }
+
+      camera.position.z = cameraZ;
+
+      const fovDelta = Math.max(-FOV_RANGE, Math.min(FOV_RANGE, cameraZVel * 1.5));
+      const newFov = FOV_BASE + fovDelta;
+      if (Math.abs(newFov - camera.fov) > 0.01) {
+        camera.fov = newFov;
+        camera.updateProjectionMatrix();
+      }
+
+      // Mouse parallax tilt (I1): small critically-damped springs on X/Y.
+      // Runs after position update so it can compose with the Z spring freely.
+      const tiltAccelX = (targetTiltX - mouseTiltX) * TILT_K_SPRING - tiltVelX * TILT_K_FRICTION;
+      const tiltAccelY = (targetTiltY - mouseTiltY) * TILT_K_SPRING - tiltVelY * TILT_K_FRICTION;
+      tiltVelX += tiltAccelX * dt;
+      tiltVelY += tiltAccelY * dt;
+      mouseTiltX += tiltVelX * dt;
+      mouseTiltY += tiltVelY * dt;
+      camera.rotation.x = mouseTiltX;
+      camera.rotation.y = mouseTiltY;
+
+      // Dynamic Bokeh focus: a point FOCUS_DIST in front of camera is placed in
+      // world space, then projected. Vector3.project() applies matrixWorldInverse
+      // then projectionMatrix, so the input must be world-space coordinates.
+      focusProbe.set(0, 0, camera.position.z - FOCUS_DIST).project(camera);
+      const focusNdc = focusProbe.z;
+      bokehPass.uniforms.focus.value = Math.max(0.0, Math.min(1.0, focusNdc * 0.5 + 0.5));
+    }
+
+    // =========================================================================
+    // Wheel handler — non-passive so we can preventDefault page scroll.
+    // deltaY < 0 (scroll up) -> dive deeper (Z goes more negative).
+    // deltaY > 0 (scroll down) -> pull back toward Z_MAX.
+    // =========================================================================
+    function onWheel(e) {
+      e.preventDefault();
+      targetZ += e.deltaY * WHEEL_K;
+      if (targetZ < Z_MIN) targetZ = Z_MIN;
+      if (targetZ > Z_MAX) targetZ = Z_MAX;
+    }
+    addEventListener('wheel', onWheel, { passive: false });
+
+    // =========================================================================
+    // Keyboard handler — space pauses, R recentres camera, digits 1-4 set the
+    // base palette, and the Konami sequence unlocks the rainbow easter egg.
+    // The Konami accumulator is tolerant of partial matches and re-starts from
+    // 'ArrowUp' whenever another key matches the start of the sequence.
+    // =========================================================================
+    addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { e.preventDefault(); window.__debug.frozen ? window.__debug.resume() : window.__debug.pause(); return; }
+      if (e.code === 'KeyR') { targetZ = 0; cameraZ = 0; cameraZVel = 0; return; }
+      if (e.code === 'Digit1') { setPalette('green');  return; }
+      if (e.code === 'Digit2') { setPalette('amber');  return; }
+      if (e.code === 'Digit3') { setPalette('cyan');   return; }
+      if (e.code === 'Digit4') { setPalette('violet'); return; }
+      if (e.code === 'KeyH') { toggleHint(); return; }
+      if (konamiActive) return; // already unlocked
+      const expected = KONAMI[konamiStep];
+      if (e.code === expected) {
+        konamiStep++;
+        if (konamiStep === KONAMI.length) {
+          konamiActive = true;
+          konamiStep = 0;
+          setPalette('rainbow');
+        }
+      } else if (e.code === KONAMI[0]) {
+        konamiStep = 1;
+      } else {
+        konamiStep = 0;
+      }
+    });
+
+    // =========================================================================
+    // Mouse parallax — cursor position normalises to ±1 and drives a small
+    // rotation spring on camera.rotation.x/y. Range is small so the scene
+    // never appears to "tilt off the floor".
+    // =========================================================================
+    addEventListener('mousemove', (e) => {
+      const nx = (e.clientX / window.innerWidth  - 0.5) * 2;
+      const ny = (e.clientY / window.innerHeight - 0.5) * 2;
+      targetTiltY = -ny * TILT_RANGE;
+      targetTiltX =  nx * TILT_RANGE;
+    });
+
+    // =========================================================================
+    // Resize — keep renderer, composer, bokeh, bloom in sync.
+    // =========================================================================
+    function applySize() {
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(dpr);
+      renderer.setSize(w, h, false);
+      composer.setPixelRatio(dpr);
+      composer.setSize(w, h);
+      if (bokehPass.setSize) bokehPass.setSize(w * dpr, h * dpr);
+      bloomPass.setSize(w * dpr, h * dpr);
+    }
+    addEventListener('resize', () => {
+      w = window.innerWidth;
+      h = window.innerHeight;
+      applySize();
+    });
+
+    // =========================================================================
+    // Quality presets.
+    //   high : DPR 2, full-res bokeh, full bloom.
+    //   med  : DPR 1, half-res bokeh, full bloom.
+    //   low  : DPR 1, no bokeh, half bloom radius.
+    // =========================================================================
+    function setQuality(q) {
+      quality = q;
+      if (q === 'high') {
+        dpr = Math.min(2, window.devicePixelRatio || 1);
+        bokehPass.enabled = true;
+        bloomPass.radius  = 0.55;
+        if (bokehPass.setSize) bokehPass.setSize(w * dpr, h * dpr);
+      } else if (q === 'med') {
+        dpr = 1;
+        bokehPass.enabled = true;
+        if (bokehPass.setSize) bokehPass.setSize(w * 0.5, h * 0.5);
+        bloomPass.radius  = 0.55;
+      } else if (q === 'low') {
+        dpr = 1;
+        bokehPass.enabled = false;
+        if (bokehPass.setSize) bokehPass.setSize(w * dpr, h * dpr);
+        bloomPass.radius  = 0.275;
+      } else {
+        return;
+      }
+      applySize();
+    }
+
+    // =========================================================================
+    // FPS / trace — rolling 1s fps, opt-in 10s windowed trace for S5.
+    // =========================================================================
+    let rollingFps = 0;
+    let frameCount = 0;
+    let lastFpsSecond = performance.now();
+    let trace = [];
+    let traceStart = 0;
+    let traceDuration = 10000;
+    let tracing = false;
+
+    function tickFps(now) {
+      frameCount++;
+      const elapsed = now - lastFpsSecond;
+      if (elapsed >= 500) {
+        const fps = frameCount * 1000 / elapsed;
+        rollingFps = rollingFps * 0.4 + fps * 0.6;
+        if (tracing) {
+          trace.push({ t: now - traceStart, fps });
+          while (trace.length > 1 && (now - traceStart - trace[0].t) > traceDuration) {
+            trace.shift();
+          }
+          if (now - traceStart >= traceDuration) tracing = false;
+        }
+        frameCount = 0;
+        lastFpsSecond = now;
+      }
+
+      // Adaptive quality (V3): if rolling FPS is low for ADAPTIVE_LOW_DURATION
+      // we cull to 70% of TOTAL. It restores only after a longer recovery
+      // window above ADAPTIVE_HIGH_THRESHOLD, so we don't flap at boundaries.
+      const _now = performance.now();
+      if (rollingFps < ADAPTIVE_LOW_THRESHOLD) {
+        if (lowFpsSince === 0) lowFpsSince = _now;
+        if (!adaptiveReduced && _now - lowFpsSince > ADAPTIVE_LOW_DURATION) {
+          setVisibleCount(Math.floor(TOTAL * 0.7));
+          adaptiveReduced = true;
+        }
+        highFpsSince = 0;
+      } else if (rollingFps > ADAPTIVE_HIGH_THRESHOLD) {
+        if (highFpsSince === 0) highFpsSince = _now;
+        if (adaptiveReduced && _now - highFpsSince > ADAPTIVE_HIGH_DURATION) {
+          setVisibleCount(TOTAL);
+          adaptiveReduced = false;
+        }
+        lowFpsSince = 0;
+      } else {
+        lowFpsSince = 0;
+        highFpsSince = 0;
+      }
+    }
+
+    function beginFpsTrace(ms) {
+      trace = [];
+      traceStart = performance.now();
+      traceDuration = (typeof ms === 'number' && ms > 0) ? ms : 10000;
+      tracing = true;
+    }
+
+    function getFpsTrace() {
+      if (trace.length === 0) {
+        return { avg: 0, min: 0, max: 0, p50: 0, samples: [] };
+      }
+      let sum = 0, mn = Infinity, mx = -Infinity;
+      for (const s of trace) {
+        sum += s.fps;
+        if (s.fps < mn) mn = s.fps;
+        if (s.fps > mx) mx = s.fps;
+      }
+      const sorted = trace.map(s => s.fps).sort((a, b) => a - b);
+      return {
+        avg: sum / trace.length,
+        min: mn,
+        max: mx,
+        p50: sorted[Math.floor(sorted.length / 2)],
+        samples: trace.slice(),
+      };
+    }
+
+    // =========================================================================
+    // HUD — small top-left readout. Updates ~4x/sec, no interaction.
+    // =========================================================================
+    const hudEl = document.getElementById('hud');
+    let hudLast = performance.now();
+    let hudAccum = 0;
+    function updateHud(now) {
+      hudAccum += now - hudLast;
+      hudLast = now;
+      if (hudAccum < 250) return;
+      hudAccum = 0;
+      const z = cameraZ.toFixed(1).padStart(6, ' ');
+      const f = rollingFps.toFixed(0).padStart(3, ' ');
+      hudEl.textContent =
+        `fps  ${f}\n` +
+        `inst ${mesh.count}  (${N_COLS} x ${N_ROWS})\n` +
+        `z    ${z}  fov ${camera.fov.toFixed(1)}\n` +
+        `qual ${quality}  dpr ${dpr.toFixed(2)}`;
+    }
+
+    // =========================================================================
+    // Hint dismiss — close button on the control panel fades it out and
+    // remembers the dismissal in sessionStorage so the next new tab / session
+    // starts with the guide visible again. Within the same tab, × and H
+    // continue to toggle the panel without nagging.
+    // =========================================================================
+    const HINT_DISMISSED_KEY = 'matrixRainHintHidden';
+    function hideHint() {
+      const el = document.getElementById('hint');
+      if (!el) return;
+      el.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+      el.style.opacity = '0';
+      el.style.transform = 'translate(-50%, 10px)';
+      setTimeout(() => { if (el) el.style.display = 'none'; }, 360);
+      try { sessionStorage.setItem(HINT_DISMISSED_KEY, '1'); } catch (e) {}
+    }
+    function showHint() {
+      const el = document.getElementById('hint');
+      if (!el) return;
+      el.style.display = '';
+      el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+      el.style.opacity = '1';
+      el.style.transform = 'translate(-50%, 0)';
+      try { sessionStorage.removeItem(HINT_DISMISSED_KEY); } catch (e) {}
+    }
+    function toggleHint() {
+      const el = document.getElementById('hint');
+      if (!el) return;
+      if (el.style.display === 'none') showHint(); else hideHint();
+    }
+    const hintCloseBtn = document.getElementById('hint-close');
+    if (hintCloseBtn) hintCloseBtn.addEventListener('click', hideHint);
+    try {
+      if (sessionStorage.getItem(HINT_DISMISSED_KEY) === '1') {
+        const el = document.getElementById('hint');
+        if (el) {
+          el.style.animation = 'none';
+          el.style.transition = 'none';
+          el.style.display = 'none';
+        }
+      }
+    } catch (e) {}
+
+    // =========================================================================
+    // __debug hook — required for verification harness.
+    // =========================================================================
+    window.__debug = {
+      getFps:           () => rollingFps,
+      getFpsTrace,
+      beginFpsTrace,
+      getCameraZ:       () => cameraZ,
+      getCameraZVel:    () => cameraZVel,
+      getTargetZ:       () => targetZ,
+      getFov:           () => camera.fov,
+      // Adaptive quality: getInstanceCount now reports the live count, while
+      // getMaxInstances / getVisibleCount expose the cap and the active count.
+      getInstanceCount: () => mesh.count,
+      getMaxInstances:  () => TOTAL,
+      // Hint controls — hooked so the verification harness and dev console
+      // can toggle the panel without clicking.
+      isHintHidden:     () => document.getElementById('hint')?.style.display === 'none',
+      dismissHint:      hideHint,
+      showHint,
+      // Reset the panel state (clear the persisted dismissal and re-show).
+      resetHintState:   () => { try { sessionStorage.removeItem(HINT_DISMISSED_KEY); } catch (e) {} showHint(); },
+      getVisibleCount:  () => visibleCount,
+      getAdaptiveReduced: () => adaptiveReduced,
+      getColumnCount:   () => N_COLS,
+      getRowsPerColumn: () => N_ROWS,
+      getQuality:       () => quality,
+      getDpr:           () => dpr,
+      setQuality,
+      // Palette (I3)
+      getPalette:       () => paletteName,
+      setPalette,
+      getPalettes:      () => Object.keys(PALETTES),
+      // Konami (I4)
+      getKonamiActive:  () => konamiActive,
+      resetKonami: () => { konamiStep = 0; konamiActive = false; setPalette('green'); },
+      // Lead-character spike buffer (v0.4a)
+      getRecentHeadSpikes: () => {
+        const out = [];
+        for (let i = 0; i < headSpikeCount; i++) out.push(HEAD_SPIKE_BUFFER[i]);
+        return out;
+      },
+      // Column glitch (v0.4b)
+      getActiveGlitches: () => columns.reduce((n, c) => n + (c.glitchActive ? 1 : 0), 0),
+      forceGlitch: (colIdx, ms = 150) => {
+        if (columns[colIdx]) {
+          columns[colIdx].glitchActive = true;
+          columns[colIdx].glitchUntil = performance.now() + ms;
+        }
+      },
+      // Mouse parallax (I1)
+      getTilt: () => ({ x: mouseTiltX, y: mouseTiltY }),
+      // Mist particles (V1)
+      getMistCount: () => MIST_COUNT,
+      setMistVisible: (v) => { mist.visible = !!v; },
+      // Chromatic aberration (V2)
+      getChromaIntensity: () => chromaPass.uniforms.uIntensity.value,
+      setChromaIntensity: (v) => { chromaPass.uniforms.uIntensity.value = +v; },
+      frozen: false,
+      pause() { this.frozen = true; },
+      resume() { this.frozen = false; },
+      renderer,
+      composer,
+      scene,
+      camera,
+      mesh,
+    };
+
+    // =========================================================================
+    // Main loop — fixed dt clamp so a backgrounded tab does not teleport glyphs.
+    // =========================================================================
+    let lastTime = performance.now();
+
+    // Pre-tick so the very first rendered frame has populated per-instance state
+    // and the head does not start at the literal top with all glyphs invisible.
+    tick(0.016);
+
+    function animate(now) {
+      const dbg = window.__debug;
+      const frozen = dbg && dbg.frozen;
+      if (!frozen) {
+        const dt = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+
+        updateCamera(dt);
+        tick(dt);
+        composer.render();
+        tickFps(now);
+      }
+      // HUD always refreshes so a frozen screenshot reflects post-freeze state.
+      updateHud(now);
+
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
