@@ -8,7 +8,7 @@
 
 ## 🎬 라이브 데모 (Live Demo)
 
-> **👉 [https://3d-matrix-rain.vercel.app/](https://3d-matrix-rain.vercel.app/)** — 브라우저에서 바로 실행 (WebGL · 60fps)
+> **👉 [https://sigco3111.github.io/3d-matrix-rain/](https://sigco3111.github.io/3d-matrix-rain/)** — 브라우저에서 바로 실행 (WebGL · 60fps)
 
 | | |
 |---|---|
@@ -95,7 +95,7 @@ python3 -m http.server 8000
 
 ### 방법 2: 라이브 데모
 별도 설치 없이 바로 확인:
-👉 **https://3d-matrix-rain.vercel.app/**
+👉 **https://sigco3111.github.io/3d-matrix-rain/**
 
 ---
 
@@ -241,7 +241,7 @@ python3 -m http.server 8000
 # → http://localhost:8000
 ```
 
-Or just open the live demo: **https://3d-matrix-rain.vercel.app/**
+Or just open the live demo: **https://sigco3111.github.io/3d-matrix-rain/**
 
 ### Stack
 
