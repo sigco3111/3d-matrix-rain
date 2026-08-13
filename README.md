@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| ![Demo](https://img.shields.io/badge/Live-Demo-7C3AED?style=for-the-badge&logo=vercel&logoColor=white) | [![Repo](https://img.shields.io/badge/GitHub-sigco3111%2F3d--matrix--rain-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sigco3111/3d-matrix-rain) |
+| ![Demo](https://img.shields.io/badge/Live-Demo-222222?style=for-the-badge&logo=githubpages&logoColor=white) | [![Repo](https://img.shields.io/badge/GitHub-sigco3111%2F3d--matrix--rain-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sigco3111/3d-matrix-rain) |
 | ![Status](https://img.shields.io/badge/Status-Live-22C55E?style=flat-square) | ![Stack](https://img.shields.io/badge/Stack-Three.js_r160-000000?style=flat-square&logo=three.js&logoColor=white) |
 | ![License](https://img.shields.io/badge/License-MIT-F1C40F?style=flat-square) | ![Deps](https://img.shields.io/badge/Dependencies-0-9CA3AF?style=flat-square) |
 
@@ -165,7 +165,7 @@ const CONFIG = {
 - [x] **v0.3** — 풀 인스턴싱 (수천 글자 60fps 안정화)
 - [x] **v0.4** — 글리프 라이프사이클 (리드 캐릭터 깜빡임, 컬럼 글리치)
 - [x] **v0.5** — UI 폴리시 (컨트롤 가이드 · 팔레트 전환 · 코나미 이스터에그)
-- [x] **v1.0** — Vercel 배포 + 라이브 데모 + README 다층 구조화 ✅
+- [x] **v1.0** — GitHub Pages 배포 + 라이브 데모 + README 다층 구조화 ✅
 - [ ] **v1.1 (예정)** — 오디오 리액티브 (마이크 입력 → 발광 강도)
 - [ ] **v2.0 (예정)** — WebXR 모드 (`VREntry` 진입으로 immersive 다이브)
 
@@ -259,7 +259,7 @@ Or just open the live demo: **https://sigco3111.github.io/3d-matrix-rain/**
 - [x] **v0.3** — Full instancing (thousands of glyphs at 60fps)
 - [x] **v0.4** — Glyph lifecycle (lead flicker, column glitch)
 - [x] **v0.5** — UI polish (control guide · palette swap · Konami easter egg)
-- [x] **v1.0** — Vercel deploy + live demo + multi-layer README
+- [x] **v1.0** — GitHub Pages deploy + live demo + multi-layer README
 - [ ] **v1.1 (planned)** — Audio-reactive (mic input → glow intensity)
 - [ ] **v2.0 (planned)** — WebXR mode (immersive dive via `VREntry`)
 
